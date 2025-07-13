@@ -42,7 +42,7 @@ class Message(Base):
     
     # Message metadata
     message_type = Column(String)  # text, product_suggestion, order_confirmation, etc.
-    metadata = Column(JSON)  # Store additional data like product IDs, order details, etc.
+    meta_info = Column(JSON)  # Store additional data like product IDs, order details, etc.
     
     # AI response data
     model_used = Column(String)  # Which AI model was used

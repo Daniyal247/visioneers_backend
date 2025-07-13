@@ -72,16 +72,17 @@ async def analyze_product_image(
         
         return {
             "success": True,
-            "suggested_product": {
-                "name": product_info.get("name", ""),
-                "description": product_info.get("description", ""),
-                "suggested_price": product_info.get("suggested_price", 0.0),
-                "brand": product_info.get("brand", ""),
-                "model": product_info.get("model", ""),
-                "specifications": product_info.get("specifications", {}),
-                "suggested_category": suggested_category,
-                "confidence_score": product_info.get("confidence", 0.0)
-            },
+            "title": product_info.get("name", ""),
+            "description": product_info.get("description", ""),
+            "condition": product_info.get("condition", "new"),
+            "suggested_price": product_info.get("suggested_price", 0.0),
+            "category": suggested_category,
+            "estimated_value": f"${product_info.get('suggested_price', 0.0)}",
+            "specifications": product_info.get("specifications", {}),
+            "tags": product_info.get("tags", []),
+            "brand": product_info.get("brand", ""),
+            "model": product_info.get("model", ""),
+            "confidence_score": product_info.get("confidence", 0.0),
             "message": "Product information extracted successfully. You can edit these details before adding to your store."
         }
     
@@ -155,6 +156,72 @@ async def process_voice_message(
     
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing voice message: {str(e)}")
+
+
+@router.post("/products/{product_id}/voice-update")
+async def update_product_voice(
+    product_id: int,
+    request: VoiceMessageRequest,
+    seller_id: int,
+    db: Session = Depends(get_db)
+):
+    """Update product using voice command"""
+    try:
+        # Verify seller owns the product
+        product = db.query(Product).filter(
+            Product.id == product_id,
+            Product.seller_id == seller_id
+        ).first()
+        
+        if not product:
+            raise HTTPException(status_code=404, detail="Product not found or not owned by seller")
+        
+        # Decode audio data
+        audio_data = base64.b64decode(request.audio_data)
+        text_message = await image_analysis.speech_to_text(audio_data)
+        
+        # Extract update instructions from voice command
+        update_data = await ai_agent.extract_product_updates_from_voice(text_message, product)
+        
+        if update_data:
+            # Apply updates to product
+            for field, value in update_data.items():
+                if hasattr(product, field):
+                    setattr(product, field, value)
+            
+            db.commit()
+            db.refresh(product)
+            
+            return {
+                "success": True,
+                "message": f"Product updated successfully: {', '.join(update_data.keys())}",
+                "original_text": text_message,
+                "updated_fields": list(update_data.keys()),
+                "product": {
+                    "id": product.id,
+                    "name": product.name,
+                    "price": product.price,
+                    "description": product.description,
+                    "condition": product.condition,
+                    "stock_quantity": product.stock_quantity
+                }
+            }
+        else:
+            return {
+                "success": False,
+                "message": "No valid updates found in voice command",
+                "original_text": text_message,
+                "suggestions": [
+                    "Try saying: 'Change the price to $99.99'",
+                    "Try saying: 'Update the name to iPhone 15 Pro'",
+                    "Try saying: 'Set the description to latest model with advanced features'",
+                    "Try saying: 'Change condition to used'",
+                    "Try saying: 'Update stock to 25 units'"
+                ]
+            }
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error updating product with voice: {str(e)}")
 
 
 @router.post("/products")

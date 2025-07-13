@@ -1,8 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from sqlalchemy.orm import Session
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 import json
 import uuid
+import base64
+from pydantic import BaseModel
 
 from ...core.database import get_db
 from ...core.security import verify_token
@@ -33,24 +35,28 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
+class ChatRequest(BaseModel):
+    message: str
+    session_id: str
+    user_id: Optional[int] = None
 
 @router.post("/chat")
 async def chat_with_agent(
-    message: str,
-    session_id: str,
-    user_id: int = None,
+    request: ChatRequest,
     db: Session = Depends(get_db)
 ):
     """Chat with the AI agent via REST API"""
     try:
         # Generate session ID if not provided
-        if not session_id:
+        if not request.session_id:
             session_id = str(uuid.uuid4())
+        else:
+            session_id = request.session_id
         
         # Process message with AI agent
         response = await ai_agent.process_user_message(
-            user_message=message,
-            user_id=user_id or 1,  # Default user ID for demo
+            user_message=request.message,
+            user_id=request.user_id or 1,  # Default user ID for demo
             session_id=session_id,
             db=db
         )
@@ -223,11 +229,14 @@ async def get_suggestions(
         raise HTTPException(status_code=500, detail=f"Error getting suggestions: {str(e)}")
 
 
+class VoiceMessageRequest(BaseModel):
+    audio_data: str  # Base64 encoded audio
+    session_id: str
+    user_id: Optional[int] = None
+
 @router.post("/voice-message")
 async def process_buyer_voice_message(
-    audio_data: str,  # Base64 encoded audio
-    session_id: str,
-    user_id: int = None,
+    request: VoiceMessageRequest,
     db: Session = Depends(get_db)
 ):
     """Process voice message from buyer"""
@@ -236,7 +245,7 @@ async def process_buyer_voice_message(
         image_analysis = ImageAnalysisService()
         
         # Decode audio data
-        audio_bytes = base64.b64decode(audio_data)
+        audio_bytes = base64.b64decode(request.audio_data)
         
         # Convert speech to text
         text_message = await image_analysis.speech_to_text(audio_bytes)
@@ -244,8 +253,8 @@ async def process_buyer_voice_message(
         # Process the text message with AI agent
         response = await ai_agent.process_user_message(
             user_message=text_message,
-            user_id=user_id or 1,
-            session_id=session_id,
+            user_id=request.user_id or 1,
+            session_id=request.session_id,
             db=db
         )
         

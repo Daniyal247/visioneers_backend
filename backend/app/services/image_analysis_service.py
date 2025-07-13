@@ -8,7 +8,18 @@ from ..core.config import settings
 
 class ImageAnalysisService:
     def __init__(self):
-        self.client = openai.OpenAI(api_key=settings.openai_api_key)
+        # Configure for Azure OpenAI if API base is provided
+        if settings.openai_api_base and settings.openai_deployment_name:
+            self.client = openai.AzureOpenAI(
+                api_key=settings.openai_api_key,
+                azure_endpoint=settings.openai_api_base,
+                api_version=settings.openai_api_version
+            )
+            self.deployment_name = settings.openai_deployment_name
+        else:
+            # Fallback to regular OpenAI
+            self.client = openai.OpenAI(api_key=settings.openai_api_key)
+            self.deployment_name = None
     
     async def analyze_product_image(self, image_data: bytes) -> Dict[str, Any]:
         """Analyze product image and extract information using AI"""
@@ -39,14 +50,16 @@ class ImageAnalysisService:
                     "key2": "value2"
                 },
                 "condition": "new/used/refurbished",
-                "confidence": 0.85
+                "confidence": 0.85,
+                "tags": ["tag1", "tag2", "tag3"]
             }
             
             Be accurate and realistic with pricing. If you can't identify the product clearly, indicate low confidence."""
             
             # Use OpenAI Vision API
+            model_name = self.deployment_name if self.deployment_name else "gpt-4-vision-preview"
             response = self.client.chat.completions.create(
-                model="gpt-4-vision-preview",
+                model=model_name,
                 messages=[
                     {
                         "role": "user",
@@ -142,8 +155,9 @@ class ImageAnalysisService:
             
             Respond with just the category name."""
             
+            model_name = self.deployment_name if self.deployment_name else "gpt-3.5-turbo"
             response = self.client.chat.completions.create(
-                model="gpt-3.5-turbo",
+                model=model_name,
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=20,
                 temperature=0.1

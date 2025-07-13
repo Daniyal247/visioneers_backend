@@ -6,7 +6,7 @@ import uvicorn
 
 from .core.config import settings
 from .core.database import engine, Base
-from .api.v1 import agent, products, seller
+from .api.v1 import agent, products, seller, auth
 
 # Create database tables
 @asynccontextmanager
@@ -44,6 +44,7 @@ app.add_middleware(
 app.include_router(agent.router, prefix="/api/v1")
 app.include_router(products.router, prefix="/api/v1")
 app.include_router(seller.router, prefix="/api/v1")
+app.include_router(auth.router, prefix="/api/v1")
 
 # Health check endpoint
 @app.get("/")
@@ -64,11 +65,19 @@ async def health_check():
 # Error handlers
 @app.exception_handler(404)
 async def not_found_handler(request, exc):
-    return {"error": "Not found", "detail": "The requested resource was not found"}
+    from fastapi.responses import JSONResponse
+    return JSONResponse(
+        status_code=404,
+        content={"error": "Not found", "detail": "The requested resource was not found"}
+    )
 
 @app.exception_handler(500)
 async def internal_error_handler(request, exc):
-    return {"error": "Internal server error", "detail": "An unexpected error occurred"}
+    from fastapi.responses import JSONResponse
+    return JSONResponse(
+        status_code=500,
+        content={"error": "Internal server error", "detail": "An unexpected error occurred"}
+    )
 
 if __name__ == "__main__":
     uvicorn.run(

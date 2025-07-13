@@ -15,7 +15,7 @@ class Category(Base):
 
     # Relationships
     products = relationship("Product", back_populates="category")
-    children = relationship("Category", backref=relationship("parent", remote_side=[id]))
+    children = relationship("Category", backref="parent", remote_side=[id])
 
     def __repr__(self):
         return f"<Category(id={self.id}, name='{self.name}')>"

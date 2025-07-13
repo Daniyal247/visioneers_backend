@@ -4,13 +4,26 @@ import time
 from typing import List, Dict, Optional, Any
 from sqlalchemy.orm import Session
 from ..core.config import settings
-from ..models import User, Product, Conversation, Message
+from ..models import User, Product, Conversation, Message, UserRole
 from .product_service import ProductService
 
 
 class AIAgent:
     def __init__(self):
-        self.client = openai.OpenAI(api_key=settings.openai_api_key)
+        # Configure OpenAI client for Azure or standard OpenAI
+        if settings.openai_api_base and settings.openai_deployment_name:
+            # Azure OpenAI configuration
+            self.client = openai.AzureOpenAI(
+                api_key=settings.openai_api_key,
+                api_version=settings.openai_api_version,
+                azure_endpoint=settings.openai_api_base
+            )
+            self.deployment_name = settings.openai_deployment_name
+        else:
+            # Standard OpenAI configuration
+            self.client = openai.OpenAI(api_key=settings.openai_api_key)
+            self.deployment_name = None
+        
         self.product_service = ProductService()
         
         # System prompt for the AI agent
@@ -73,6 +86,22 @@ Always be helpful, friendly, and professional. When suggesting products, provide
 
     def _get_or_create_conversation(self, db: Session, user_id: int, session_id: str) -> Conversation:
         """Get existing conversation or create new one"""
+        # First, ensure the user exists
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            # Create a default user if it doesn't exist
+            user = User(
+                id=user_id,
+                email=f"user{user_id}@example.com",
+                username=f"user{user_id}",
+                hashed_password="default_password_hash",
+                full_name=f"User {user_id}",
+                role=UserRole.BUYER
+            )
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+        
         conversation = db.query(Conversation).filter(
             Conversation.session_id == session_id,
             Conversation.is_active == True
@@ -119,8 +148,11 @@ Classify the intent as one of:
 Respond with just the intent category."""
 
         try:
+            # Use deployment name for Azure, model name for standard OpenAI
+            model_or_deployment = self.deployment_name if self.deployment_name else "gpt-3.5-turbo"
+            
             response = self.client.chat.completions.create(
-                model="gpt-3.5-turbo",
+                model=model_or_deployment,
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=10,
                 temperature=0.1
@@ -371,7 +403,7 @@ Respond with just the intent category."""
             conversation_id=conversation_id,
             content=content,
             role=role,
-            metadata=metadata or {},
+            meta_info=metadata or {},
             model_used=settings.agent_model
         )
         db.add(message)
@@ -440,8 +472,11 @@ Classify the intent as one of:
 Respond with just the intent category."""
 
         try:
+            # Use deployment name for Azure, model name for standard OpenAI
+            model_or_deployment = self.deployment_name if self.deployment_name else "gpt-3.5-turbo"
+            
             response = self.client.chat.completions.create(
-                model="gpt-3.5-turbo",
+                model=model_or_deployment,
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=10,
                 temperature=0.1
@@ -567,6 +602,67 @@ Be helpful, professional, and provide actionable advice."""
             try:
                 return float(price_text)
             except ValueError:
+                return None
+                
+        except Exception:
+            return None
+
+    async def extract_product_updates_from_voice(self, text_message: str, product) -> Optional[Dict[str, Any]]:
+        """Extract product updates from voice command"""
+        prompt = f"""Extract product updates from this voice command: "{text_message}"
+
+Current product info:
+- Name: {product.name}
+- Price: ${product.price}
+- Description: {product.description}
+- Condition: {product.condition}
+- Stock: {product.stock_quantity}
+
+Look for updates to:
+- name: Product name changes
+- price: Price changes (numeric values)
+- description: Description updates
+- condition: Condition changes (new, used, refurbished)
+- stock_quantity: Stock quantity changes (numeric values)
+- brand: Brand changes
+- model: Model changes
+
+Return a JSON object with only the fields that need to be updated, or null if no valid updates found.
+
+Examples:
+- "Change the price to $99.99" → {{"price": 99.99}}
+- "Update the name to iPhone 15 Pro" → {{"name": "iPhone 15 Pro"}}
+- "Set description to latest model" → {{"description": "latest model"}}
+- "Change condition to used" → {{"condition": "used"}}
+- "Update stock to 25 units" → {{"stock_quantity": 25}}
+- "Change brand to Apple" → {{"brand": "Apple"}}
+
+Return only the JSON object, no additional text."""
+
+        try:
+            model_or_deployment = self.deployment_name if self.deployment_name else "gpt-3.5-turbo"
+            
+            response = self.client.chat.completions.create(
+                model=model_or_deployment,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=100,
+                temperature=0.1
+            )
+            
+            result = response.choices[0].message.content.strip()
+            
+            # Try to parse as JSON
+            try:
+                import json
+                updates = json.loads(result)
+                
+                # Validate that updates contain valid fields
+                valid_fields = ['name', 'price', 'description', 'condition', 'stock_quantity', 'brand', 'model']
+                filtered_updates = {k: v for k, v in updates.items() if k in valid_fields}
+                
+                return filtered_updates if filtered_updates else None
+                
+            except json.JSONDecodeError:
                 return None
                 
         except Exception:

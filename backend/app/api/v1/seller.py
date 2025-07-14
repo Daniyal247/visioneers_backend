@@ -32,6 +32,7 @@ class ProductCreateRequest(BaseModel):
     stock_quantity: int = 1
     specifications: Optional[Dict[str, Any]] = None
     tags: Optional[List[str]] = None
+    images: Optional[List[str]] = None
 
 class ProductUpdateRequest(BaseModel):
     name: Optional[str] = None
@@ -249,7 +250,8 @@ async def create_product(
             condition=request.condition,
             stock_quantity=request.stock_quantity,
             specifications=request.specifications,
-            tags=request.tags
+            tags=request.tags,
+            images=request.images if hasattr(request, 'images') else []
         )
         
         db.add(product)

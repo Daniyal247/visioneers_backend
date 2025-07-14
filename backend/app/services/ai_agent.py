@@ -27,7 +27,7 @@ class AIAgent:
         self.product_service = ProductService()
         
         # System prompt for the AI agent
-        self.system_prompt = """You are an AI shopping assistant for Visioneers Marketplace. Your role is to help users find products, make recommendations, and assist with purchases.
+        self.system_prompt = """You are an AI shopping assistant for Visioneers Marketplace. Your role is to help users find products, make recommendations, and assist with purchases through natural language interactions.
 
 Key capabilities:
 1. Product Search: Help users find specific products based on their needs
@@ -35,6 +35,8 @@ Key capabilities:
 3. Product Information: Provide detailed information about products
 4. Purchase Assistance: Help users complete purchases
 5. Support: Answer questions about orders, shipping, returns, etc.
+
+IMPORTANT: Always maintain conversation context. Remember previous user preferences, search criteria, and product discussions. When users refer to products mentioned earlier, use that context to provide relevant responses.
 
 Always be helpful, friendly, and professional. When suggesting products, provide relevant details like price, features, and availability. If you don't have information about a specific product, say so and suggest alternatives."""
 
@@ -175,16 +177,25 @@ Respond with just the intent category."""
                 "metadata": {"products": []}
             }
         
-        # Format product suggestions
+        # Format product suggestions with complete information
         product_suggestions = []
         for product in products[:5]:  # Limit to 5 suggestions
             product_suggestions.append({
                 "id": product.id,
                 "name": product.name,
                 "price": product.price,
-                "description": product.description[:100] + "..." if len(product.description) > 100 else product.description,
+                "description": product.description,
                 "brand": product.brand,
-                "category": product.category.name if product.category else None
+                "model": product.model,
+                "condition": product.condition,
+                "stock_quantity": product.stock_quantity,
+                "category": product.category.name if product.category else None,
+                "seller_id": product.seller_id,
+                "images": product.images,
+                "specifications": product.specifications,
+                "tags": product.tags,
+                "is_active": product.is_active,
+                "is_featured": product.is_featured
             })
         
         response_text = "Here are some products that match your search:\n\n"
@@ -322,10 +333,19 @@ Respond with just the intent category."""
         }
 
     async def _handle_general_query(self, user_message: str, conversation_history: List[Dict]) -> Dict[str, Any]:
-        """Handle general queries using AI"""
+        """Handle general queries using AI with enhanced context awareness"""
+        # Build context-aware prompt
+        context_summary = ""
+        if conversation_history:
+            recent_messages = conversation_history[-3:]  # Last 3 messages for context
+            context_summary = f"\n\nRecent conversation context:\n"
+            for msg in recent_messages:
+                context_summary += f"- {msg['role']}: {msg['content'][:100]}...\n"
+        
+        enhanced_prompt = self.system_prompt + context_summary + "\n\nCurrent user message: " + user_message
+        
         messages = [
-            {"role": "system", "content": self.system_prompt},
-            *conversation_history[-5:],  # Last 5 messages for context
+            {"role": "system", "content": enhanced_prompt},
             {"role": "user", "content": user_message}
         ]
         

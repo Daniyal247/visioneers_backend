@@ -93,13 +93,20 @@ class ProductService:
 
     def get_featured_products(self, db: Session, limit: int = 10) -> List[Product]:
         """Get featured products"""
-        return db.query(Product).filter(
+        products = db.query(Product).filter(
             and_(
                 Product.is_active == True,
                 Product.is_featured == True,
                 Product.stock_quantity > 0
             )
         ).order_by(Product.price).limit(limit).all()
+        
+        # Debug logging
+        print(f"🔍 Featured products query found {len(products)} products")
+        for product in products:
+            print(f"  - {product.name} (ID: {product.id}, Featured: {product.is_featured})")
+        
+        return products
 
     def get_products_by_category(self, db: Session, category_name: str, limit: int = 20) -> List[Product]:
         """Get products by category"""

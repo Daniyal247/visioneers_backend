@@ -144,44 +144,102 @@ async def get_products(
         raise HTTPException(status_code=500, detail=f"Error getting products: {str(e)}")
 
 
-@router.get("/{product_id}")
-async def get_product(
-    product_id: int,
+@router.get("/featured")
+async def get_featured_products(
+    limit: int = Query(10, description="Number of featured products"),
     db: Session = Depends(get_db)
 ):
-    """Get product by ID"""
+    """Get featured products"""
     try:
-        product = product_service.get_product_by_id(db, product_id)
+        products = product_service.get_featured_products(db, limit)
         
-        if not product:
-            raise HTTPException(status_code=404, detail="Product not found")
+        # If no featured products, get some active products as fallback
+        if not products:
+            print("⚠️ No featured products found, getting active products as fallback")
+            products = db.query(Product).filter(
+                Product.is_active == True,
+                Product.stock_quantity > 0
+            ).order_by(Product.created_at.desc()).limit(limit).all()
+            
+            # Mark them as featured for display
+            for product in products:
+                product.is_featured = True
         
         return {
             "success": True,
-            "product": {
-                "id": product.id,
-                "name": product.name,
-                "description": product.description,
-                "price": product.price,
-                "stock_quantity": product.stock_quantity,
-                "brand": product.brand,
-                "model": product.model,
-                "condition": product.condition,
-                "category": product.category.name if product.category else None,
-                "seller": product.seller.username if product.seller else None,
-                "is_featured": product.is_featured,
-                "images": product.images,
-                "specifications": product.specifications,
-                "tags": product.tags,
-                "created_at": product.created_at.isoformat(),
-                "updated_at": product.updated_at.isoformat() if product.updated_at else None
-            }
+            "products": [
+                {
+                    "id": p.id,
+                    "name": p.name,
+                    "description": p.description,
+                    "price": p.price,
+                    "stock_quantity": p.stock_quantity,
+                    "brand": p.brand,
+                    "model": p.model,
+                    "condition": p.condition,
+                    "category": p.category.name if p.category else None,
+                    "seller": p.seller.username if p.seller else None,
+                    "is_featured": p.is_featured,
+                    "images": p.images,
+                    "specifications": p.specifications
+                }
+                for p in products
+            ],
+            "total_found": len(products)
         }
     
-    except HTTPException:
-        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error getting product: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error getting featured products: {str(e)}")
+
+
+@router.post("/featured/setup")
+async def setup_featured_products(db: Session = Depends(get_db)):
+    """Setup featured products for testing"""
+    try:
+        # Get all active products
+        products = db.query(Product).filter(
+            Product.is_active == True,
+            Product.stock_quantity > 0
+        ).limit(5).all()
+        
+        # Mark first 3 products as featured
+        for i, product in enumerate(products[:3]):
+            product.is_featured = True
+            print(f"✅ Marked {product.name} as featured")
+        
+        db.commit()
+        
+        return {
+            "success": True,
+            "message": f"Marked {min(3, len(products))} products as featured",
+            "products_updated": len(products[:3])
+        }
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error setting up featured products: {str(e)}")
+
+
+@router.get("/categories")
+async def get_categories(db: Session = Depends(get_db)):
+    """Get all categories"""
+    try:
+        categories = product_service.get_categories(db)
+        
+        return {
+            "success": True,
+            "categories": [
+                {
+                    "id": c.id,
+                    "name": c.name,
+                    "description": c.description,
+                    "parent_id": c.parent_id
+                }
+                for c in categories
+            ]
+        }
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error getting categories: {str(e)}")
 
 
 @router.get("/category/{category_name}")
@@ -265,60 +323,41 @@ async def get_products_by_brand(
         raise HTTPException(status_code=500, detail=f"Error getting products by brand: {str(e)}")
 
 
-@router.get("/categories")
-async def get_categories(db: Session = Depends(get_db)):
-    """Get all categories"""
-    try:
-        categories = product_service.get_categories(db)
-        
-        return {
-            "success": True,
-            "categories": [
-                {
-                    "id": c.id,
-                    "name": c.name,
-                    "description": c.description,
-                    "parent_id": c.parent_id
-                }
-                for c in categories
-            ]
-        }
-    
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error getting categories: {str(e)}")
-
-
-@router.get("/featured")
-async def get_featured_products(
-    limit: int = Query(10, description="Number of featured products"),
+@router.get("/{product_id}")
+async def get_product(
+    product_id: int,
     db: Session = Depends(get_db)
 ):
-    """Get featured products"""
+    """Get product by ID"""
     try:
-        products = product_service.get_featured_products(db, limit)
+        product = product_service.get_product_by_id(db, product_id)
+        
+        if not product:
+            raise HTTPException(status_code=404, detail="Product not found")
         
         return {
             "success": True,
-            "products": [
-                {
-                    "id": p.id,
-                    "name": p.name,
-                    "description": p.description,
-                    "price": p.price,
-                    "stock_quantity": p.stock_quantity,
-                    "brand": p.brand,
-                    "model": p.model,
-                    "condition": p.condition,
-                    "category": p.category.name if p.category else None,
-                    "seller": p.seller.username if p.seller else None,
-                    "is_featured": p.is_featured,
-                    "images": p.images,
-                    "specifications": p.specifications
-                }
-                for p in products
-            ],
-            "total_found": len(products)
+            "product": {
+                "id": product.id,
+                "name": product.name,
+                "description": product.description,
+                "price": product.price,
+                "stock_quantity": product.stock_quantity,
+                "brand": product.brand,
+                "model": product.model,
+                "condition": product.condition,
+                "category": product.category.name if product.category else None,
+                "seller": product.seller.username if product.seller else None,
+                "is_featured": product.is_featured,
+                "images": product.images,
+                "specifications": product.specifications,
+                "tags": product.tags,
+                "created_at": product.created_at.isoformat(),
+                "updated_at": product.updated_at.isoformat() if product.updated_at else None
+            }
         }
     
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error getting featured products: {str(e)}") 
+        raise HTTPException(status_code=500, detail=f"Error getting product: {str(e)}") 

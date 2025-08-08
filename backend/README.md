@@ -196,9 +196,9 @@ Conversations (1) ←→ (Many) Messages
    
    # AI Provider
    OPENAI_API_KEY=your-openai-api-key
-   OPENAI_API_BASE=https://kaispeazureai.openai.azure.com/
-   OPENAI_API_VERSION=2024-02-15-preview
-   OPENAI_DEPLOYMENT_NAME=gpt-4o
+   OPENAI_API_BASE=Your-openai-base-url
+   OPENAI_API_VERSION=your-model-version
+   OPENAI_DEPLOYMENT_NAME=your-deployment-name
    
    # Security
    SECRET_KEY=your-secret-key-here

@@ -3,10 +3,14 @@ from fastapi.security import OAuth2PasswordRequestForm, OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 from typing import Optional
 from pydantic import BaseModel
+from datetime import datetime, timedelta
 
 from ...core.database import get_db
 from ...core.security import verify_password, get_password_hash, create_access_token, verify_token
 from ...models import User, UserRole
+
+from uuid import uuid4
+import requests
 
 # OAuth2 scheme for token authentication
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
@@ -51,23 +55,46 @@ async def register(user_data: UserRegister, db: Session = Depends(get_db)):
     
     # Create new user
     hashed_password = get_password_hash(user_data.password)
+    token = uuid4().hex
+    
+    # Set token expiration (24 hours from now)
+    token_expires = datetime.utcnow() + timedelta(hours=24)
+    
     new_user = User(
         email=user_data.email,
         username=user_data.username,
         hashed_password=hashed_password,
         full_name=user_data.full_name,
-        role=user_data.role
+        role=user_data.role,
+        email_verification_token=token,
+        email_token_expires_at=token_expires
     )
     
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
     
+    # Send verification email
+    # send_verification_email_from_n8n(new_user.email, token)
+
     return {
         "success": True,
-        "message": "User registered successfully",
+        "message": "User registered successfully, please check your email for verification",
         "user_id": new_user.id
     }
+
+# def send_verification_email_from_n8n(email: str, token: str):
+#     try:
+#         response = requests.post(
+#             "https://dani127.app.n8n.cloud/webhook/send-verification",
+#             json={
+#                 "email": email,
+#                 "token": token
+#             }
+#         )
+#         response.raise_for_status()
+#     except Exception as e:
+#         print(f"Error sending verification email: {e}")
 
 @router.post("/login", response_model=TokenResponse)
 async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
@@ -107,6 +134,34 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = 
             is_verified=user.is_verified
         )
     )
+
+@router.get("/verify/{token}")
+async def verify_email(token: str, db: Session = Depends(get_db)):
+    """Verify user email with token"""
+    
+    # Find user with this token
+    user = db.query(User).filter(
+        User.email_verification_token == token,
+        User.email_token_expires_at > datetime.utcnow()
+    ).first()
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired verification token"
+        )
+    
+    # Mark user as verified and clear token
+    user.is_verified = True
+    user.email_verification_token = None
+    user.email_token_expires_at = None
+    
+    db.commit()
+    
+    return {
+        "success": True,
+        "message": "Email verified successfully! You can now log in."
+    }
 
 # Helper function to get current user from token
 async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> User:

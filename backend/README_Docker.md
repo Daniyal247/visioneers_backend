@@ -2,6 +2,19 @@
 
 This guide covers how to run the Visioneers Marketplace backend using Docker and Docker Compose.
 
+## Table of Contents
+
+1. [Prerequisites](#prerequisites)
+2. [Quick Start](#quick-start)
+3. [Database Schema](#database-schema)
+4. [API Endpoints](#api-endpoints)
+5. [Email Verification Flow](#email-verification-flow)
+6. [Environment Configuration](#environment-configuration)
+7. [Docker Commands](#docker-commands)
+8. [Database Management](#database-management)
+9. [Troubleshooting](#troubleshooting)
+10. [Production Deployment](#production-deployment)
+
 ## Prerequisites
 
 - Docker (version 20.10 or higher)
@@ -51,6 +64,273 @@ docker-compose -f docker-compose.prod.yml up --build
 docker-compose -f docker-compose.prod.yml up -d --build
 ```
 
+## Database Schema
+
+The Visioneers Marketplace uses PostgreSQL with the following schema:
+
+### Core Tables
+
+#### 1. Users Table (`users`)
+```sql
+- id (Primary Key, Integer)
+- email (Unique, indexed, String)
+- username (Unique, indexed, String)
+- hashed_password (String)
+- full_name (String)
+- role (Enum: BUYER, SELLER, ADMIN)
+- is_active (Boolean, default: true)
+- is_verified (Boolean, default: false)
+- created_at (Timestamp)
+- updated_at (Timestamp)
+- email_verification_token (String, nullable)
+- email_token_expires_at (Timestamp, nullable)
+```
+
+#### 2. Categories Table (`categories`)
+```sql
+- id (Primary Key, Integer)
+- name (Unique, indexed, String)
+- description (Text)
+- parent_id (Foreign Key → categories.id, nullable)
+- created_at (Timestamp)
+```
+
+#### 3. Products Table (`products`)
+```sql
+- id (Primary Key, Integer)
+- name (Indexed, String)
+- description (Text)
+- price (Float)
+- stock_quantity (Integer, default: 0)
+- category_id (Foreign Key → categories.id)
+- seller_id (Foreign Key → users.id)
+- brand (String)
+- model (String)
+- condition (String: new, used, refurbished)
+- specifications (JSON)
+- images (JSON array of URLs)
+- tags (JSON array)
+- is_active (Boolean, default: true)
+- is_featured (Boolean, default: false)
+- created_at (Timestamp)
+- updated_at (Timestamp)
+```
+
+#### 4. Orders Table (`orders`)
+```sql
+- id (Primary Key, Integer)
+- order_number (Unique, indexed, String)
+- buyer_id (Foreign Key → users.id)
+- total_amount (Float)
+- shipping_address (String)
+- billing_address (String)
+- order_status (Enum: PENDING, CONFIRMED, SHIPPED, DELIVERED, CANCELLED, REFUNDED)
+- payment_status (Enum: PENDING, PAID, FAILED, REFUNDED)
+- payment_method (String)
+- payment_transaction_id (String)
+- created_at (Timestamp)
+- updated_at (Timestamp)
+```
+
+#### 5. Order Items Table (`order_items`)
+```sql
+- id (Primary Key, Integer)
+- order_id (Foreign Key → orders.id)
+- product_id (Foreign Key → products.id)
+- quantity (Integer)
+- unit_price (Float)
+- total_price (Float)
+- created_at (Timestamp)
+```
+
+#### 6. Conversations Table (`conversations`)
+```sql
+- id (Primary Key, Integer)
+- user_id (Foreign Key → users.id)
+- session_id (Unique, indexed, String)
+- context (JSON)
+- intent (String)
+- is_active (Boolean, default: true)
+- created_at (Timestamp)
+- updated_at (Timestamp)
+```
+
+#### 7. Messages Table (`messages`)
+```sql
+- id (Primary Key, Integer)
+- conversation_id (Foreign Key → conversations.id)
+- content (Text)
+- role (String: user, assistant, system)
+- message_type (String)
+- meta_info (JSON)
+- model_used (String)
+- tokens_used (Integer)
+- response_time (Float)
+- created_at (Timestamp)
+```
+
+### Database Relationships
+
+```
+Users (1) ←→ (Many) Products (as seller)
+Users (1) ←→ (Many) Orders (as buyer)
+Users (1) ←→ (Many) Conversations
+
+Categories (1) ←→ (Many) Products
+Categories (1) ←→ (Many) Categories (self-referencing for hierarchy)
+
+Orders (1) ←→ (Many) OrderItems
+Products (1) ←→ (Many) OrderItems
+
+Conversations (1) ←→ (Many) Messages
+```
+
+### Database Setup
+
+```bash
+# Create database tables
+docker exec -it visioneers_backend_dev python setup_database.py
+
+# Add missing columns (if needed)
+docker exec -it visioneers_backend_dev python add_missing_columns.py
+```
+
+## API Endpoints
+
+### Authentication (`/api/v1/auth`)
+
+#### Register User
+```http
+POST /api/v1/auth/register
+Content-Type: application/json
+
+{
+  "email": "user@example.com",
+  "username": "username",
+  "password": "password123",
+  "full_name": "John Doe",
+  "role": "buyer"
+}
+```
+
+#### Login
+```http
+POST /api/v1/auth/login
+Content-Type: application/x-www-form-urlencoded
+
+username=user@example.com&password=password123
+```
+
+#### Verify Email
+```http
+GET /api/v1/auth/verify/{token}
+```
+
+#### Get Current User
+```http
+GET /api/v1/auth/me
+Authorization: Bearer {access_token}
+```
+
+### Products (`/api/v1/products`)
+
+#### Get All Products
+```http
+GET /api/v1/products
+```
+
+#### Get Product by ID
+```http
+GET /api/v1/products/{product_id}
+```
+
+#### Create Product (Seller only)
+```http
+POST /api/v1/products
+Authorization: Bearer {access_token}
+Content-Type: application/json
+
+{
+  "name": "Product Name",
+  "description": "Product description",
+  "price": 99.99,
+  "category_id": 1,
+  "stock_quantity": 10
+}
+```
+
+### Seller Dashboard (`/api/v1/seller`)
+
+#### Get Seller Products
+```http
+GET /api/v1/seller/products
+Authorization: Bearer {access_token}
+```
+
+#### Update Product
+```http
+PUT /api/v1/seller/products/{product_id}
+Authorization: Bearer {access_token}
+```
+
+### AI Agent (`/api/v1/agent`)
+
+#### Chat with AI
+```http
+POST /api/v1/agent/chat
+Content-Type: application/json
+
+{
+  "message": "Hello, I'm looking for electronics",
+  "session_id": "unique-session-id"
+}
+```
+
+## Email Verification Flow
+
+### Registration Process
+
+1. **User registers** via `/api/v1/auth/register`
+2. **System creates user** with verification token
+3. **N8N webhook called** with email and token
+4. **Email sent** with verification link
+5. **User clicks link** → `/api/v1/auth/verify/{token}`
+6. **User verified** and can login
+
+### N8N Integration
+
+The system integrates with N8N for email verification:
+
+**Webhook URL**: `https://dani127.app.n8n.cloud/webhook/send-verification`
+
+**Payload**:
+```json
+{
+  "email": "user@example.com",
+  "token": "abc123def456..."
+}
+```
+
+**Expected N8N Flow**:
+1. Receive webhook with email and token
+2. Generate verification link: `http://your-frontend.com/verify?token={token}`
+3. Send email with verification link
+4. User clicks link and gets verified
+
+### Verification Endpoint
+
+```http
+GET /api/v1/auth/verify/{token}
+```
+
+**Response**:
+```json
+{
+  "success": true,
+  "message": "Email verified successfully! You can now log in."
+}
+```
+
 ## Environment Configuration
 
 ### Required Environment Variables
@@ -59,7 +339,7 @@ Create a `.env` file in the backend directory:
 
 ```bash
 # Database Configuration
-DATABASE_URL=postgresql://visioneers_user:visioneers_password@postgres:5432/visioneers_marketplace
+DATABASE_URL=postgresql://visioneers_user:visioneers_password@visioneers_postgres_dev:5432/visioneers_marketplace_dev
 REDIS_URL=redis://redis:6379
 
 # Security
@@ -69,9 +349,12 @@ ACCESS_TOKEN_EXPIRE_MINUTES=30
 
 # OpenAI Configuration
 OPENAI_API_KEY=your-openai-api-key-here
+OPENAI_API_BASE=https://kaispeazureai.openai.azure.com/
+OPENAI_API_VERSION=2024-02-15-preview
+OPENAI_DEPLOYMENT_NAME=gpt-4o
 
 # Application Settings
-DEBUG=False
+DEBUG=True
 HOST=0.0.0.0
 PORT=8000
 
@@ -139,10 +422,10 @@ docker-compose logs backend
 
 ```bash
 # Connect to PostgreSQL container
-docker exec -it visioneers_postgres psql -U visioneers_user -d visioneers_marketplace
+docker exec -it visioneers_postgres_dev psql -U visioneers_user -d visioneers_marketplace_dev
 
 # Or using docker-compose
-docker-compose exec postgres psql -U visioneers_user -d visioneers_marketplace
+docker-compose exec postgres psql -U visioneers_user -d visioneers_marketplace_dev
 ```
 
 ### pgAdmin (Development)
@@ -154,7 +437,7 @@ docker-compose exec postgres psql -U visioneers_user -d visioneers_marketplace
 3. Add server:
    - Host: postgres
    - Port: 5432
-   - Database: visioneers_marketplace
+   - Database: visioneers_marketplace_dev
    - Username: visioneers_user
    - Password: visioneers_password
 
@@ -188,7 +471,13 @@ backend/
 ├── backup.sh                # Database backup script
 ├── env.example              # Environment variables template
 ├── uploads/                 # File uploads (mounted volume)
-└── logs/                    # Application logs (mounted volume)
+├── logs/                    # Application logs (mounted volume)
+├── app/
+│   ├── api/v1/             # API endpoints
+│   ├── core/               # Core configuration
+│   ├── models/             # Database models
+│   └── services/           # Business logic
+└── setup_database.py       # Database setup script
 ```
 
 ## Health Checks
@@ -250,10 +539,10 @@ docker-compose -f docker-compose.prod.yml run backup
 
 ```bash
 # Create backup
-docker exec visioneers_postgres pg_dump -U visioneers_user visioneers_marketplace > backup.sql
+docker exec visioneers_postgres_dev pg_dump -U visioneers_user visioneers_marketplace_dev > backup.sql
 
 # Restore backup
-docker exec -i visioneers_postgres psql -U visioneers_user visioneers_marketplace < backup.sql
+docker exec -i visioneers_postgres_dev psql -U visioneers_user visioneers_marketplace_dev < backup.sql
 ```
 
 ## Troubleshooting
@@ -292,6 +581,12 @@ docker exec -i visioneers_postgres psql -U visioneers_user visioneers_marketplac
    
    # Clean up unused resources
    docker system prune
+   ```
+
+5. **Missing database columns**
+   ```bash
+   # Add missing columns
+   docker exec -it visioneers_backend_dev python add_missing_columns.py
    ```
 
 ### Debugging
@@ -340,7 +635,7 @@ docker-compose -f docker-compose.prod.yml up --scale backend=3
 
 ```bash
 # Optimize PostgreSQL
-docker-compose exec postgres psql -U visioneers_user -d visioneers_marketplace -c "
+docker-compose exec postgres psql -U visioneers_user -d visioneers_marketplace_dev -c "
 ALTER SYSTEM SET shared_buffers = '256MB';
 ALTER SYSTEM SET effective_cache_size = '1GB';
 ALTER SYSTEM SET maintenance_work_mem = '64MB';
@@ -371,6 +666,11 @@ curl http://localhost:8000/docs
 curl -X POST http://localhost:8000/api/v1/agent/chat \
   -H "Content-Type: application/json" \
   -d '{"message": "Hello", "session_id": "test-session"}'
+
+# Test registration
+curl -X POST http://localhost:8000/api/v1/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"email": "test@example.com", "username": "testuser", "password": "password123", "full_name": "Test User"}'
 ```
 
 ## Support

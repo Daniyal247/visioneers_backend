@@ -5,7 +5,7 @@ import os
 
 class Settings(BaseSettings):
     # Database
-    database_url: str = "postgresql://user:password@localhost:5432/visioneers_marketplace"
+    database_url: str = "postgresql://visioneers_user:visioneers_password@visioneers_postgres_dev:5432/visioneers_marketplace_dev"
     
     # Security
     secret_key: str = "your-secret-key-here"

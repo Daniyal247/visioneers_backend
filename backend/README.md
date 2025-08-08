@@ -10,6 +10,7 @@ An AI-powered marketplace backend with an intelligent shopping assistant that he
 - **User Management**: Authentication and user role management (buyer/seller/admin)
 - **Order Management**: Complete order processing and tracking
 - **Conversation History**: Persistent chat history for context-aware interactions
+- **Email Verification**: N8N integration for user registration confirmation emails
 
 ## Architecture
 
@@ -22,8 +23,132 @@ visioneers_marketplace/
 │   │   ├── api/v1/         # API endpoints
 │   │   ├── services/       # Business logic (AI agent, product service)
 │   │   └── main.py         # FastAPI application
+│   ├── debug_shell         # To read or get the data from the DB about the users
 │   ├── requirements.txt    # Python dependencies
 │   └── env.example        # Environment variables template
+```
+
+Also adding n8n in the Solution to send confirmation mailing when someone signs up.
+
+## Database Schema
+
+The Visioneers Marketplace uses PostgreSQL with the following schema:
+
+### Core Tables
+
+#### 1. Users Table (`users`)
+```sql
+- id (Primary Key, Integer)
+- email (Unique, indexed, String)
+- username (Unique, indexed, String)
+- hashed_password (String)
+- full_name (String)
+- role (Enum: BUYER, SELLER, ADMIN)
+- is_active (Boolean, default: true)
+- is_verified (Boolean, default: false)
+- created_at (Timestamp)
+- updated_at (Timestamp)
+- email_verification_token (String, nullable)
+- email_token_expires_at (Timestamp, nullable)
+```
+
+#### 2. Categories Table (`categories`)
+```sql
+- id (Primary Key, Integer)
+- name (Unique, indexed, String)
+- description (Text)
+- parent_id (Foreign Key → categories.id, nullable)
+- created_at (Timestamp)
+```
+
+#### 3. Products Table (`products`)
+```sql
+- id (Primary Key, Integer)
+- name (Indexed, String)
+- description (Text)
+- price (Float)
+- stock_quantity (Integer, default: 0)
+- category_id (Foreign Key → categories.id)
+- seller_id (Foreign Key → users.id)
+- brand (String)
+- model (String)
+- condition (String: new, used, refurbished)
+- specifications (JSON)
+- images (JSON array of URLs)
+- tags (JSON array)
+- is_active (Boolean, default: true)
+- is_featured (Boolean, default: false)
+- created_at (Timestamp)
+- updated_at (Timestamp)
+```
+
+#### 4. Orders Table (`orders`)
+```sql
+- id (Primary Key, Integer)
+- order_number (Unique, indexed, String)
+- buyer_id (Foreign Key → users.id)
+- total_amount (Float)
+- shipping_address (String)
+- billing_address (String)
+- order_status (Enum: PENDING, CONFIRMED, SHIPPED, DELIVERED, CANCELLED, REFUNDED)
+- payment_status (Enum: PENDING, PAID, FAILED, REFUNDED)
+- payment_method (String)
+- payment_transaction_id (String)
+- created_at (Timestamp)
+- updated_at (Timestamp)
+```
+
+#### 5. Order Items Table (`order_items`)
+```sql
+- id (Primary Key, Integer)
+- order_id (Foreign Key → orders.id)
+- product_id (Foreign Key → products.id)
+- quantity (Integer)
+- unit_price (Float)
+- total_price (Float)
+- created_at (Timestamp)
+```
+
+#### 6. Conversations Table (`conversations`)
+```sql
+- id (Primary Key, Integer)
+- user_id (Foreign Key → users.id)
+- session_id (Unique, indexed, String)
+- context (JSON)
+- intent (String)
+- is_active (Boolean, default: true)
+- created_at (Timestamp)
+- updated_at (Timestamp)
+```
+
+#### 7. Messages Table (`messages`)
+```sql
+- id (Primary Key, Integer)
+- conversation_id (Foreign Key → conversations.id)
+- content (Text)
+- role (String: user, assistant, system)
+- message_type (String)
+- meta_info (JSON)
+- model_used (String)
+- tokens_used (Integer)
+- response_time (Float)
+- created_at (Timestamp)
+```
+
+### Database Relationships
+
+```
+Users (1) ←→ (Many) Products (as seller)
+Users (1) ←→ (Many) Orders (as buyer)
+Users (1) ←→ (Many) Conversations
+
+Categories (1) ←→ (Many) Products
+Categories (1) ←→ (Many) Categories (self-referencing for hierarchy)
+
+Orders (1) ←→ (Many) OrderItems
+Products (1) ←→ (Many) OrderItems
+
+Conversations (1) ←→ (Many) Messages
 ```
 
 ## Tech Stack
@@ -34,6 +159,7 @@ visioneers_marketplace/
 - **Real-time**: WebSocket support for live chat
 - **Authentication**: JWT tokens
 - **Caching**: Redis (optional)
+- **Email Integration**: N8N for automated email verification
 
 ## Setup Instructions
 
@@ -66,23 +192,36 @@ visioneers_marketplace/
 6. Configure environment variables in `.env`:
    ```env
    # Database
-   DATABASE_URL=postgresql://user:password@localhost:5432/visioneers_marketplace
+   DATABASE_URL=postgresql://visioneers_user:visioneers_password@visioneers_postgres_dev:5432/visioneers_marketplace_dev
    
    # AI Provider
    OPENAI_API_KEY=your-openai-api-key
+   OPENAI_API_BASE=https://kaispeazureai.openai.azure.com/
+   OPENAI_API_VERSION=2024-02-15-preview
+   OPENAI_DEPLOYMENT_NAME=gpt-4o
    
    # Security
    SECRET_KEY=your-secret-key-here
+   ALGORITHM=HS256
+   ACCESS_TOKEN_EXPIRE_MINUTES=30
    ```
 
 ### 3. Database Setup
 
 1. Create PostgreSQL database:
    ```sql
-   CREATE DATABASE visioneers_marketplace;
+   CREATE DATABASE visioneers_marketplace_dev;
    ```
 
-2. Run database migrations (tables will be created automatically on startup)
+2. Run database setup:
+   ```bash
+   python setup_database.py
+   ```
+
+3. Add missing columns (if needed):
+   ```bash
+   python add_missing_columns.py
+   ```
 
 ### 4. Run the Application
 
@@ -101,6 +240,129 @@ The API will be available at `http://localhost:8000`
 Once the server is running, visit:
 - **Interactive API Docs**: http://localhost:8000/docs
 - **Alternative Docs**: http://localhost:8000/redoc
+
+## API Endpoints
+
+### Authentication (`/api/v1/auth`)
+
+#### Register User
+```http
+POST /api/v1/auth/register
+Content-Type: application/json
+
+{
+  "email": "user@example.com",
+  "username": "username",
+  "password": "password123",
+  "full_name": "John Doe",
+  "role": "buyer"
+}
+```
+
+#### Login
+```http
+POST /api/v1/auth/login
+Content-Type: application/x-www-form-urlencoded
+
+username=user@example.com&password=password123
+```
+
+#### Verify Email
+```http
+GET /api/v1/auth/verify/{token}
+```
+
+#### Get Current User
+```http
+GET /api/v1/auth/me
+Authorization: Bearer {access_token}
+```
+
+### Products (`/api/v1/products`)
+
+#### Get All Products
+```http
+GET /api/v1/products
+```
+
+#### Get Product by ID
+```http
+GET /api/v1/products/{product_id}
+```
+
+#### Create Product (Seller only)
+```http
+POST /api/v1/products
+Authorization: Bearer {access_token}
+Content-Type: application/json
+
+{
+  "name": "Product Name",
+  "description": "Product description",
+  "price": 99.99,
+  "category_id": 1,
+  "stock_quantity": 10
+}
+```
+
+### Seller Dashboard (`/api/v1/seller`)
+
+#### Get Seller Products
+```http
+GET /api/v1/seller/products
+Authorization: Bearer {access_token}
+```
+
+#### Update Product
+```http
+PUT /api/v1/seller/products/{product_id}
+Authorization: Bearer {access_token}
+```
+
+## Email Verification Flow
+
+### Registration Process
+
+1. **User registers** via `/api/v1/auth/register`
+2. **System creates user** with verification token
+3. **N8N webhook called** with email and token
+4. **Email sent** with verification link
+5. **User clicks link** → `/api/v1/auth/verify/{token}`
+6. **User verified** and can login
+
+### N8N Integration
+
+The system integrates with N8N for email verification:
+
+**Webhook URL**: `https://dani127.app.n8n.cloud/webhook/send-verification`
+
+**Payload**:
+```json
+{
+  "email": "user@example.com",
+  "token": "abc123def456..."
+}
+```
+
+**Expected N8N Flow**:
+1. Receive webhook with email and token
+2. Generate verification link: `http://your-frontend.com/verify?token={token}`
+3. Send email with verification link
+4. User clicks link and gets verified
+
+### Verification Endpoint
+
+```http
+GET /api/v1/auth/verify/{token}
+```
+
+**Response**:
+```json
+{
+  "success": true,
+  "message": "Email verified successfully! You can now log in."
+}
+```
 
 ## AI Agent API Endpoints
 

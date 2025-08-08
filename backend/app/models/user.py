@@ -30,5 +30,9 @@ class User(Base):
     orders = relationship("Order", back_populates="buyer")
     conversations = relationship("Conversation", back_populates="user")
 
+    # Email confirmation token
+    email_verification_token = Column(String, nullable=True)
+    email_token_expires_at = Column(DateTime, nullable=True)
+
     def __repr__(self):
         return f"<User(id={self.id}, email='{self.email}', role='{self.role}')>" 
